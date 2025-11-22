@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>太阳系 3D 可视化</title>
+  <title>太阳系 3D 可视化（无 Three.js）</title>
   <style>
     * {
       box-sizing: border-box;
@@ -25,6 +25,12 @@
       inset: 0;
     }
 
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
     #hud {
       position: absolute;
       top: 16px;
@@ -35,7 +41,7 @@
       border-radius: 12px;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
       backdrop-filter: blur(8px);
-      max-width: 340px;
+      max-width: 360px;
     }
 
     #hud h1 {
@@ -114,174 +120,243 @@
   </style>
 </head>
 <body>
-  <div id="canvas-container"></div>
+  <div id="canvas-container">
+    <canvas id="space"></canvas>
+  </div>
   <div id="hud">
     <h1>交互式太阳系</h1>
-    <p>拖拽旋转，滚轮缩放；点击“暂停/继续”控制行星公转速度，快速浏览行星轨道。</p>
+    <p>拖拽旋转视角，滚轮缩放；点击“暂停/继续”控制公转。无需 Three.js，直接使用 Canvas 计算与绘制。</p>
     <div id="controls">
       <button id="toggle">暂停</button>
       <button id="reset">重新居中</button>
     </div>
     <div class="legend" id="legend"></div>
   </div>
-  <div id="credits">灵感来自 NASA 公开影像，三维效果由 Three.js 实现。</div>
+  <div id="credits">基于原生 Canvas & 数学变换绘制，无依赖。</div>
 
-  <script type="module">
-    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js";
-    import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/controls/OrbitControls.js";
+  <script>
+    const canvas = document.getElementById('space');
+    const ctx = canvas.getContext('2d');
+    const legend = document.getElementById('legend');
+    const toggleBtn = document.getElementById('toggle');
+    const resetBtn = document.getElementById('reset');
 
-    const container = document.getElementById("canvas-container");
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    container.appendChild(renderer.domElement);
+    const dpr = window.devicePixelRatio || 1;
+    let width = 0;
+    let height = 0;
 
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
-    camera.position.set(0, 180, 420);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.06;
-    controls.minDistance = 60;
-    controls.maxDistance = 900;
-
-    const sunMaterial = new THREE.MeshStandardMaterial({
-      emissive: new THREE.Color(0xffd27f),
-      emissiveIntensity: 2,
-      color: 0xfff2c2,
-      roughness: 0.45,
-      metalness: 0.15,
-    });
-    const sun = new THREE.Mesh(new THREE.SphereGeometry(26, 64, 64), sunMaterial);
-    scene.add(sun);
-
-    const sunlight = new THREE.PointLight(0xffdca8, 3.4, 0, 2);
-    sunlight.position.set(0, 0, 0);
-    scene.add(sunlight);
-    scene.add(new THREE.AmbientLight(0x23325c, 0.45));
-
-    const starsGeometry = new THREE.BufferGeometry();
-    const starCount = 2500;
-    const positions = new Float32Array(starCount * 3);
-    for (let i = 0; i < starCount; i++) {
-      const radius = 1200 * Math.cbrt(Math.random());
-      const theta = Math.random() * 2 * Math.PI;
-      const phi = Math.acos(2 * Math.random() - 1);
-      positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
-      positions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
-      positions[i * 3 + 2] = radius * Math.cos(phi);
+    function resize() {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.scale(dpr, dpr);
     }
-    starsGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    const starsMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 1.2, transparent: true, opacity: 0.95 });
-    const starField = new THREE.Points(starsGeometry, starsMaterial);
-    scene.add(starField);
+    resize();
+    window.addEventListener('resize', resize);
 
-    const planetData = [
-      { name: "水星", color: "#c4c0ba", size: 3, orbit: 46, speed: 4.15 },
-      { name: "金星", color: "#f2d6a2", size: 5, orbit: 68, speed: 1.62 },
-      { name: "地球", color: "#5aa0ff", size: 5.2, orbit: 92, speed: 1.0 },
-      { name: "火星", color: "#f08a4b", size: 4.2, orbit: 140, speed: 0.53 },
-      { name: "木星", color: "#d9c6aa", size: 16, orbit: 240, speed: 0.084 },
-      { name: "土星", color: "#d9c59d", size: 13.5, orbit: 330, speed: 0.034, ring: true },
-      { name: "天王星", color: "#87c8dd", size: 9.5, orbit: 420, speed: 0.0119 },
-      { name: "海王星", color: "#4f7df2", size: 9, orbit: 490, speed: 0.006 },
+    const camera = {
+      distance: 480,
+      rotX: 0.35,
+      rotY: -0.6,
+      minDistance: 160,
+      maxDistance: 820,
+    };
+
+    const starCount = 900;
+    const stars = Array.from({ length: starCount }, () => {
+      const r = 1200 * Math.cbrt(Math.random());
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      return {
+        x: r * Math.sin(phi) * Math.cos(theta),
+        y: r * Math.sin(phi) * Math.sin(theta),
+        z: r * Math.cos(phi),
+        size: Math.random() * 1.8 + 0.3,
+      };
+    });
+
+    const planets = [
+      { name: '水星', color: '#c4c0ba', size: 4, orbit: 46, speed: 4.15, angle: Math.random() * Math.PI * 2 },
+      { name: '金星', color: '#f2d6a2', size: 6, orbit: 68, speed: 1.62, angle: Math.random() * Math.PI * 2 },
+      { name: '地球', color: '#5aa0ff', size: 6.2, orbit: 92, speed: 1, angle: Math.random() * Math.PI * 2 },
+      { name: '火星', color: '#f08a4b', size: 5, orbit: 140, speed: 0.53, angle: Math.random() * Math.PI * 2 },
+      { name: '木星', color: '#d9c6aa', size: 18, orbit: 240, speed: 0.084, angle: Math.random() * Math.PI * 2 },
+      { name: '土星', color: '#d9c59d', size: 16, orbit: 330, speed: 0.034, angle: Math.random() * Math.PI * 2, ring: true },
+      { name: '天王星', color: '#87c8dd', size: 11, orbit: 420, speed: 0.0119, angle: Math.random() * Math.PI * 2 },
+      { name: '海王星', color: '#4f7df2', size: 10, orbit: 490, speed: 0.006, angle: Math.random() * Math.PI * 2 },
     ];
 
-    const planetGroups = [];
-    const legendContainer = document.getElementById("legend");
+    planets.forEach((p) => {
+      const item = document.createElement('div');
+      item.innerHTML = `<span class="dot" style="background:${p.color}"></span>${p.name}`;
+      legend.appendChild(item);
+    });
 
-    planetData.forEach((planet) => {
-      const pivot = new THREE.Object3D();
-      const orbitAngle = (Math.random() - 0.5) * 0.08;
-      pivot.rotation.x = orbitAngle;
-      scene.add(pivot);
+    const focal = 620;
+    function rotateY(v, angle) {
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      return { x: v.x * cos - v.z * sin, y: v.y, z: v.x * sin + v.z * cos };
+    }
 
-      const geometry = new THREE.SphereGeometry(planet.size, 48, 48);
-      const material = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(planet.color),
-        roughness: 0.6,
-        metalness: 0.1,
-      });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.x = planet.orbit;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      pivot.add(mesh);
+    function rotateX(v, angle) {
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      return { x: v.x, y: v.y * cos - v.z * sin, z: v.y * sin + v.z * cos };
+    }
 
-      const orbitSegments = 256;
-      const orbitGeometry = new THREE.BufferGeometry();
-      const orbitVertices = [];
-      for (let i = 0; i <= orbitSegments; i++) {
-        const theta = (i / orbitSegments) * Math.PI * 2;
-        orbitVertices.push(planet.orbit * Math.cos(theta), 0, planet.orbit * Math.sin(theta));
-      }
-      orbitGeometry.setAttribute("position", new THREE.Float32BufferAttribute(orbitVertices, 3));
-      const orbitLine = new THREE.LineLoop(
-        orbitGeometry,
-        new THREE.LineBasicMaterial({ color: new THREE.Color(planet.color).multiplyScalar(0.7), transparent: true, opacity: 0.45 })
-      );
-      orbitLine.rotation.x = orbitAngle;
-      scene.add(orbitLine);
+    function project({ x, y, z }) {
+      const rotatedY = rotateY({ x, y, z }, camera.rotY);
+      const rotated = rotateX(rotatedY, camera.rotX);
+      const zc = rotated.z + camera.distance;
+      const scale = focal / zc;
+      return {
+        x: width / 2 + rotated.x * scale,
+        y: height / 2 + rotated.y * scale,
+        scale,
+        depth: zc,
+      };
+    }
 
-      if (planet.ring) {
-        const ringGeometry = new THREE.RingGeometry(planet.size * 1.6, planet.size * 2.6, 64, 1);
-        const ringMaterial = new THREE.MeshStandardMaterial({
-          color: 0xded7c7,
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: 0.85,
-          roughness: 0.4,
-        });
-        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-        ring.rotation.x = Math.PI / 2.1;
-        mesh.add(ring);
-      }
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
 
-      planetGroups.push({ pivot, mesh, speed: planet.speed });
+    canvas.addEventListener('mousedown', (e) => {
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
 
-      const legendItem = document.createElement("div");
-      legendItem.innerHTML = `<span class="dot" style="background:${planet.color}"></span>${planet.name}`;
-      legendContainer.appendChild(legendItem);
+    window.addEventListener('mouseup', () => (dragging = false));
+
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      camera.rotY -= dx * 0.005;
+      camera.rotX = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, camera.rotX - dy * 0.005));
+    });
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = Math.sign(e.deltaY);
+      camera.distance = Math.min(camera.maxDistance, Math.max(camera.minDistance, camera.distance + delta * 24));
+    }, { passive: false });
+
+    resetBtn.addEventListener('click', () => {
+      camera.distance = 480;
+      camera.rotX = 0.35;
+      camera.rotY = -0.6;
     });
 
     let running = true;
-    const toggleBtn = document.getElementById("toggle");
-    const resetBtn = document.getElementById("reset");
-
-    toggleBtn.addEventListener("click", () => {
+    toggleBtn.addEventListener('click', () => {
       running = !running;
-      toggleBtn.textContent = running ? "暂停" : "继续";
+      toggleBtn.textContent = running ? '暂停' : '继续';
     });
 
-    resetBtn.addEventListener("click", () => {
-      controls.reset();
-    });
+    function drawStarfield() {
+      ctx.save();
+      stars.forEach((star) => {
+        const { x, y, scale } = project(star);
+        ctx.globalAlpha = Math.min(1, 0.35 + scale * 0.6);
+        ctx.fillStyle = '#dbe6ff';
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(0.4, star.size * scale * 0.9), 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.restore();
+    }
 
-    let lastTime = performance.now();
-    function animate(now) {
-      const delta = Math.min(now - lastTime, 50);
-      lastTime = now;
+    function drawSun() {
+      const sunProj = project({ x: 0, y: 0, z: 0 });
+      const radius = 26 * sunProj.scale;
+      const grd = ctx.createRadialGradient(sunProj.x, sunProj.y, radius * 0.2, sunProj.x, sunProj.y, radius);
+      grd.addColorStop(0, 'rgba(255, 224, 150, 0.95)');
+      grd.addColorStop(0.5, 'rgba(255, 180, 80, 0.75)');
+      grd.addColorStop(1, 'rgba(255, 150, 40, 0.12)');
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(sunProj.x, sunProj.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawOrbit(planet) {
+      ctx.save();
+      ctx.strokeStyle = `${planet.color}55`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const segments = 140;
+      for (let i = 0; i <= segments; i++) {
+        const theta = (i / segments) * Math.PI * 2;
+        const point = project({ x: planet.orbit * Math.cos(theta), y: 0, z: planet.orbit * Math.sin(theta) });
+        if (i === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawPlanet(planet) {
+      const pos3D = {
+        x: planet.orbit * Math.cos(planet.angle),
+        y: planet.orbit * 0.02 * Math.sin(planet.angle * 0.5),
+        z: planet.orbit * Math.sin(planet.angle),
+      };
+      const p = project(pos3D);
+      const radius = Math.max(1.2, planet.size * p.scale);
+
+      ctx.save();
+      ctx.fillStyle = planet.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (planet.ring) {
+        ctx.strokeStyle = `rgba(222, 215, 199, ${0.25 + 0.4 * p.scale})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const inner = radius * 1.8;
+        const outer = radius * 2.7;
+        ctx.ellipse(p.x, p.y, outer, inner, camera.rotX + 1.2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    let last = performance.now();
+    function loop(now) {
+      const dt = Math.min(now - last, 50) / 1000;
+      last = now;
 
       if (running) {
-        planetGroups.forEach(({ pivot, mesh, speed }) => {
-          pivot.rotation.y += (delta / 1000) * speed * 1.6;
-          mesh.rotation.y += 0.01;
+        planets.forEach((planet) => {
+          planet.angle += dt * planet.speed * 1.8;
         });
-        sun.rotation.y += 0.002 * delta;
       }
 
-      controls.update();
-      renderer.render(scene, camera);
-      requestAnimationFrame(animate);
-    }
-    requestAnimationFrame(animate);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, width, height);
 
-    window.addEventListener("resize", () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+      drawStarfield();
+      drawSun();
+      planets.forEach(drawOrbit);
+
+      const sorted = [...planets].sort((a, b) => {
+        const pa = project({ x: a.orbit * Math.cos(a.angle), y: 0, z: a.orbit * Math.sin(a.angle) }).depth;
+        const pb = project({ x: b.orbit * Math.cos(b.angle), y: 0, z: b.orbit * Math.sin(b.angle) }).depth;
+        return pb - pa;
+      });
+      sorted.forEach(drawPlanet);
+
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
   </script>
 </body>
 </html>
