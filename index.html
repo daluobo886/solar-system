@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>太阳系 3D 可视化</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      background: radial-gradient(ellipse at top, #0a0f1f 0%, #02040a 60%, #010104 100%);
+      color: #e6ecff;
+    }
+
+    #canvas-container {
+      position: absolute;
+      inset: 0;
+    }
+
+    #hud {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      padding: 14px 16px;
+      background: rgba(12, 18, 36, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(8px);
+      max-width: 340px;
+    }
+
+    #hud h1 {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      margin-bottom: 6px;
+    }
+
+    #hud p {
+      font-size: 13px;
+      line-height: 1.4;
+      color: #b7c2df;
+      margin-bottom: 10px;
+    }
+
+    #hud .legend {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 12px;
+      margin-top: 8px;
+    }
+
+    #hud .legend div {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #d4ddff;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      flex-shrink: 0;
+    }
+
+    #controls {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    #controls button {
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.05);
+      color: #e8edff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.15s ease, background 0.2s ease, border 0.2s ease;
+      font-size: 13px;
+    }
+
+    #controls button:hover {
+      transform: translateY(-1px);
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.32);
+    }
+
+    #credits {
+      position: absolute;
+      bottom: 14px;
+      right: 16px;
+      font-size: 11px;
+      color: #7f8bad;
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: rgba(8, 12, 24, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      letter-spacing: 0.02em;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="hud">
+    <h1>交互式太阳系</h1>
+    <p>拖拽旋转，滚轮缩放；点击“暂停/继续”控制行星公转速度，快速浏览行星轨道。</p>
+    <div id="controls">
+      <button id="toggle">暂停</button>
+      <button id="reset">重新居中</button>
+    </div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div id="credits">灵感来自 NASA 公开影像，三维效果由 Three.js 实现。</div>
+
+  <script type="module">
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js";
+    import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/controls/OrbitControls.js";
+
+    const container = document.getElementById("canvas-container");
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    container.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+    camera.position.set(0, 180, 420);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 60;
+    controls.maxDistance = 900;
+
+    const sunMaterial = new THREE.MeshStandardMaterial({
+      emissive: new THREE.Color(0xffd27f),
+      emissiveIntensity: 2,
+      color: 0xfff2c2,
+      roughness: 0.45,
+      metalness: 0.15,
+    });
+    const sun = new THREE.Mesh(new THREE.SphereGeometry(26, 64, 64), sunMaterial);
+    scene.add(sun);
+
+    const sunlight = new THREE.PointLight(0xffdca8, 3.4, 0, 2);
+    sunlight.position.set(0, 0, 0);
+    scene.add(sunlight);
+    scene.add(new THREE.AmbientLight(0x23325c, 0.45));
+
+    const starsGeometry = new THREE.BufferGeometry();
+    const starCount = 2500;
+    const positions = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const radius = 1200 * Math.cbrt(Math.random());
+      const theta = Math.random() * 2 * Math.PI;
+      const phi = Math.acos(2 * Math.random() - 1);
+      positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+      positions[i * 3 + 2] = radius * Math.cos(phi);
+    }
+    starsGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const starsMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 1.2, transparent: true, opacity: 0.95 });
+    const starField = new THREE.Points(starsGeometry, starsMaterial);
+    scene.add(starField);
+
+    const planetData = [
+      { name: "水星", color: "#c4c0ba", size: 3, orbit: 46, speed: 4.15 },
+      { name: "金星", color: "#f2d6a2", size: 5, orbit: 68, speed: 1.62 },
+      { name: "地球", color: "#5aa0ff", size: 5.2, orbit: 92, speed: 1.0 },
+      { name: "火星", color: "#f08a4b", size: 4.2, orbit: 140, speed: 0.53 },
+      { name: "木星", color: "#d9c6aa", size: 16, orbit: 240, speed: 0.084 },
+      { name: "土星", color: "#d9c59d", size: 13.5, orbit: 330, speed: 0.034, ring: true },
+      { name: "天王星", color: "#87c8dd", size: 9.5, orbit: 420, speed: 0.0119 },
+      { name: "海王星", color: "#4f7df2", size: 9, orbit: 490, speed: 0.006 },
+    ];
+
+    const planetGroups = [];
+    const legendContainer = document.getElementById("legend");
+
+    planetData.forEach((planet) => {
+      const pivot = new THREE.Object3D();
+      const orbitAngle = (Math.random() - 0.5) * 0.08;
+      pivot.rotation.x = orbitAngle;
+      scene.add(pivot);
+
+      const geometry = new THREE.SphereGeometry(planet.size, 48, 48);
+      const material = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(planet.color),
+        roughness: 0.6,
+        metalness: 0.1,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.x = planet.orbit;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      pivot.add(mesh);
+
+      const orbitSegments = 256;
+      const orbitGeometry = new THREE.BufferGeometry();
+      const orbitVertices = [];
+      for (let i = 0; i <= orbitSegments; i++) {
+        const theta = (i / orbitSegments) * Math.PI * 2;
+        orbitVertices.push(planet.orbit * Math.cos(theta), 0, planet.orbit * Math.sin(theta));
+      }
+      orbitGeometry.setAttribute("position", new THREE.Float32BufferAttribute(orbitVertices, 3));
+      const orbitLine = new THREE.LineLoop(
+        orbitGeometry,
+        new THREE.LineBasicMaterial({ color: new THREE.Color(planet.color).multiplyScalar(0.7), transparent: true, opacity: 0.45 })
+      );
+      orbitLine.rotation.x = orbitAngle;
+      scene.add(orbitLine);
+
+      if (planet.ring) {
+        const ringGeometry = new THREE.RingGeometry(planet.size * 1.6, planet.size * 2.6, 64, 1);
+        const ringMaterial = new THREE.MeshStandardMaterial({
+          color: 0xded7c7,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.85,
+          roughness: 0.4,
+        });
+        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+        ring.rotation.x = Math.PI / 2.1;
+        mesh.add(ring);
+      }
+
+      planetGroups.push({ pivot, mesh, speed: planet.speed });
+
+      const legendItem = document.createElement("div");
+      legendItem.innerHTML = `<span class="dot" style="background:${planet.color}"></span>${planet.name}`;
+      legendContainer.appendChild(legendItem);
+    });
+
+    let running = true;
+    const toggleBtn = document.getElementById("toggle");
+    const resetBtn = document.getElementById("reset");
+
+    toggleBtn.addEventListener("click", () => {
+      running = !running;
+      toggleBtn.textContent = running ? "暂停" : "继续";
+    });
+
+    resetBtn.addEventListener("click", () => {
+      controls.reset();
+    });
+
+    let lastTime = performance.now();
+    function animate(now) {
+      const delta = Math.min(now - lastTime, 50);
+      lastTime = now;
+
+      if (running) {
+        planetGroups.forEach(({ pivot, mesh, speed }) => {
+          pivot.rotation.y += (delta / 1000) * speed * 1.6;
+          mesh.rotation.y += 0.01;
+        });
+        sun.rotation.y += 0.002 * delta;
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
