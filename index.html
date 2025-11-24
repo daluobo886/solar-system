@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>太阳系 3D 可视化（无 Three.js）</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      background: radial-gradient(ellipse at top, #0a0f1f 0%, #02040a 60%, #010104 100%);
+      color: #e6ecff;
+    }
+
+    #canvas-container {
+      position: absolute;
+      inset: 0;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #hud {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      padding: 12px 14px 10px;
+      background: rgba(8, 12, 24, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+      max-width: 280px;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+
+    #hud.collapsed {
+      opacity: 0.1;
+      pointer-events: none;
+      transform: translateY(-6px);
+    }
+
+    #hud h1 {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      margin-bottom: 6px;
+    }
+
+    #hud p {
+      font-size: 13px;
+      line-height: 1.4;
+      color: #b7c2df;
+      margin-bottom: 10px;
+    }
+
+    #hud .legend {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 12px;
+      margin-top: 8px;
+    }
+
+    #hud .legend div {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #d4ddff;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      flex-shrink: 0;
+    }
+
+    #controls {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    #controls button {
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.05);
+      color: #e8edff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.15s ease, background 0.2s ease, border 0.2s ease;
+      font-size: 13px;
+    }
+
+    #controls button:hover {
+      transform: translateY(-1px);
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.32);
+    }
+
+    #credits {
+      position: absolute;
+      bottom: 12px;
+      left: 16px;
+      font-size: 11px;
+      color: #7f8bad;
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: rgba(8, 12, 24, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      letter-spacing: 0.02em;
+    }
+
+    #hud-toggle {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      transform: translate(calc(100% + 10px), 0);
+      padding: 6px 10px;
+      background: rgba(12, 18, 36, 0.75);
+      color: #d8e2ff;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container">
+    <canvas id="space"></canvas>
+  </div>
+  <button id="hud-toggle" aria-label="折叠/展开面板">隐藏面板</button>
+  <div id="hud">
+    <h1>交互式太阳系</h1>
+    <p>拖拽旋转视角，滚轮缩放；点击“暂停/继续”控制公转。无需 Three.js，直接使用 Canvas 计算与绘制。</p>
+    <div id="controls">
+      <button id="toggle">暂停</button>
+      <button id="reset">重新居中</button>
+    </div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div id="credits">基于原生 Canvas & 数学变换绘制，无依赖。</div>
+
+  <script>
+    const canvas = document.getElementById('space');
+  const ctx = canvas.getContext('2d');
+  const legend = document.getElementById('legend');
+  const toggleBtn = document.getElementById('toggle');
+  const resetBtn = document.getElementById('reset');
+  const hud = document.getElementById('hud');
+  const hudToggle = document.getElementById('hud-toggle');
+
+    const dpr = window.devicePixelRatio || 1;
+    let width = 0;
+    let height = 0;
+
+    function resize() {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.scale(dpr, dpr);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    const camera = {
+      distance: 480,
+      rotX: 0.35,
+      rotY: -0.6,
+      minDistance: 160,
+      maxDistance: 820,
+    };
+
+    const starCount = 2000;
+    const stars = Array.from({ length: starCount }, () => {
+      const r = 1200 * Math.cbrt(Math.random());
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      return {
+        x: r * Math.sin(phi) * Math.cos(theta),
+        y: r * Math.sin(phi) * Math.sin(theta),
+        z: r * Math.cos(phi),
+        size: Math.random() * 1.8 + 0.3,
+      };
+    });
+
+    function makeTexture(base, accents) {
+      const size = 64;
+      const tex = document.createElement('canvas');
+      tex.width = tex.height = size;
+      const tctx = tex.getContext('2d');
+      const grad = tctx.createLinearGradient(0, 0, size, size);
+      base.forEach(([stop, color]) => grad.addColorStop(stop, color));
+      tctx.fillStyle = grad;
+      tctx.fillRect(0, 0, size, size);
+      tctx.globalAlpha = 0.32;
+      accents.forEach(({ width: w, angle, offset, color }) => {
+        tctx.save();
+        tctx.translate(size / 2, size / 2);
+        tctx.rotate(angle);
+        tctx.fillStyle = color;
+        tctx.fillRect(-size / 2, offset * size - w / 2, size, w);
+        tctx.restore();
+      });
+      return tex;
+    }
+
+    const textures = {
+      mercury: makeTexture([
+        [0, '#b8b7b1'],
+        [0.5, '#dcd8d2'],
+        [1, '#9d9c98'],
+      ], [
+        { width: 10, angle: 0.4, offset: -0.15, color: '#8f8d88' },
+        { width: 8, angle: -0.2, offset: 0.25, color: '#b1b0ab' },
+      ]),
+      venus: makeTexture([
+        [0, '#f6e4b8'],
+        [0.6, '#f1d59f'],
+        [1, '#d9b06e'],
+      ], [
+        { width: 14, angle: 0.3, offset: -0.1, color: '#e8c588' },
+        { width: 12, angle: -0.35, offset: 0.28, color: '#f7dfb9' },
+      ]),
+      earth: makeTexture([
+        [0, '#4d9cff'],
+        [0.55, '#2368d0'],
+        [1, '#143b8a'],
+      ], [
+        { width: 16, angle: 0.25, offset: -0.05, color: '#3da56d' },
+        { width: 12, angle: -0.32, offset: 0.18, color: '#6ac58e' },
+      ]),
+      mars: makeTexture([
+        [0, '#f7a35e'],
+        [0.5, '#e48038'],
+        [1, '#b6541d'],
+      ], [
+        { width: 12, angle: 0.3, offset: -0.08, color: '#c86d33' },
+        { width: 9, angle: -0.28, offset: 0.22, color: '#f1a066' },
+      ]),
+      jupiter: makeTexture([
+        [0, '#e8d2b6'],
+        [0.45, '#c8a678'],
+        [1, '#b98f67'],
+      ], [
+        { width: 14, angle: 0, offset: -0.2, color: '#a37852' },
+        { width: 18, angle: 0, offset: 0.05, color: '#d9b897' },
+        { width: 10, angle: 0, offset: 0.25, color: '#aa7c58' },
+      ]),
+      saturn: makeTexture([
+        [0, '#f4e2c4'],
+        [0.55, '#d4b78a'],
+        [1, '#c7a06a'],
+      ], [
+        { width: 12, angle: 0, offset: -0.18, color: '#b18a5a' },
+        { width: 16, angle: 0, offset: 0.1, color: '#e7cfac' },
+      ]),
+      uranus: makeTexture([
+        [0, '#b8f0ff'],
+        [0.5, '#89d7f0'],
+        [1, '#5aaac6'],
+      ], [
+        { width: 16, angle: 0.15, offset: -0.1, color: '#7ac7df' },
+        { width: 10, angle: -0.15, offset: 0.2, color: '#a6e3f5' },
+      ]),
+      neptune: makeTexture([
+        [0, '#6aa0ff'],
+        [0.5, '#3c70d7'],
+        [1, '#1f4da5'],
+      ], [
+        { width: 14, angle: 0.18, offset: -0.12, color: '#3b79dc' },
+        { width: 12, angle: -0.12, offset: 0.18, color: '#74a7ff' },
+      ]),
+    };
+
+    const planets = [
+      { name: '水星', color: '#c4c0ba', size: 4, orbit: 46, speed: 4.15, angle: Math.random() * Math.PI * 2, texture: textures.mercury },
+      { name: '金星', color: '#f2d6a2', size: 6, orbit: 68, speed: 1.62, angle: Math.random() * Math.PI * 2, texture: textures.venus },
+      { name: '地球', color: '#5aa0ff', size: 6.2, orbit: 92, speed: 1, angle: Math.random() * Math.PI * 2, texture: textures.earth },
+      { name: '火星', color: '#f08a4b', size: 5, orbit: 140, speed: 0.53, angle: Math.random() * Math.PI * 2, texture: textures.mars },
+      { name: '木星', color: '#d9c6aa', size: 18, orbit: 240, speed: 0.084, angle: Math.random() * Math.PI * 2, texture: textures.jupiter },
+      { name: '土星', color: '#d9c59d', size: 16, orbit: 330, speed: 0.034, angle: Math.random() * Math.PI * 2, ring: true, texture: textures.saturn },
+      { name: '天王星', color: '#87c8dd', size: 11, orbit: 420, speed: 0.0119, angle: Math.random() * Math.PI * 2, texture: textures.uranus },
+      { name: '海王星', color: '#4f7df2', size: 10, orbit: 490, speed: 0.006, angle: Math.random() * Math.PI * 2, texture: textures.neptune },
+    ];
+
+    planets.forEach((p) => {
+      const item = document.createElement('div');
+      item.innerHTML = `<span class="dot" style="background:${p.color}"></span>${p.name}`;
+      legend.appendChild(item);
+    });
+
+    const focal = 620;
+    function rotateY(v, angle) {
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      return { x: v.x * cos - v.z * sin, y: v.y, z: v.x * sin + v.z * cos };
+    }
+
+    function rotateX(v, angle) {
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      return { x: v.x, y: v.y * cos - v.z * sin, z: v.y * sin + v.z * cos };
+    }
+
+    function project({ x, y, z }) {
+      const rotatedY = rotateY({ x, y, z }, camera.rotY);
+      const rotated = rotateX(rotatedY, camera.rotX);
+      const zc = rotated.z + camera.distance;
+      const scale = focal / zc;
+      return {
+        x: width / 2 + rotated.x * scale,
+        y: height / 2 + rotated.y * scale,
+        scale,
+        depth: zc,
+      };
+    }
+
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    canvas.addEventListener('mousedown', (e) => {
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+
+    window.addEventListener('mouseup', () => (dragging = false));
+
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      camera.rotY -= dx * 0.005;
+      camera.rotX = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, camera.rotX - dy * 0.005));
+    });
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = Math.sign(e.deltaY);
+      camera.distance = Math.min(camera.maxDistance, Math.max(camera.minDistance, camera.distance + delta * 24));
+    }, { passive: false });
+
+    resetBtn.addEventListener('click', () => {
+      camera.distance = 480;
+      camera.rotX = 0.35;
+      camera.rotY = -0.6;
+    });
+
+    hudToggle.addEventListener('click', () => {
+      hud.classList.toggle('collapsed');
+      hudToggle.textContent = hud.classList.contains('collapsed') ? '显示面板' : '隐藏面板';
+      if (!hud.classList.contains('collapsed')) hud.style.pointerEvents = 'auto';
+    });
+
+    let running = true;
+    toggleBtn.addEventListener('click', () => {
+      running = !running;
+      toggleBtn.textContent = running ? '暂停' : '继续';
+    });
+
+    function drawStarfield() {
+      ctx.save();
+      stars.forEach((star) => {
+        const { x, y, scale } = project(star);
+        const base = Math.min(1, 0.25 + scale * 0.7);
+        const tint = Math.random() > 0.7 ? '#f7f3ff' : '#dbe6ff';
+        ctx.globalAlpha = base;
+        ctx.fillStyle = tint;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(0.35, star.size * scale * 0.85), 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.restore();
+    }
+
+    function drawSun() {
+      const sunProj = project({ x: 0, y: 0, z: 0 });
+      const radius = 26 * sunProj.scale;
+      const grd = ctx.createRadialGradient(sunProj.x, sunProj.y, radius * 0.2, sunProj.x, sunProj.y, radius);
+      grd.addColorStop(0, 'rgba(255, 224, 150, 0.95)');
+      grd.addColorStop(0.5, 'rgba(255, 180, 80, 0.75)');
+      grd.addColorStop(1, 'rgba(255, 150, 40, 0.12)');
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(sunProj.x, sunProj.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawOrbit(planet) {
+      ctx.save();
+      ctx.strokeStyle = `${planet.color}55`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const segments = 140;
+      for (let i = 0; i <= segments; i++) {
+        const theta = (i / segments) * Math.PI * 2;
+        const point = project({ x: planet.orbit * Math.cos(theta), y: 0, z: planet.orbit * Math.sin(theta) });
+        if (i === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawPlanet(planet) {
+      const pos3D = {
+        x: planet.orbit * Math.cos(planet.angle),
+        y: planet.orbit * 0.02 * Math.sin(planet.angle * 0.5),
+        z: planet.orbit * Math.sin(planet.angle),
+      };
+      const p = project(pos3D);
+      const radius = Math.max(1.2, planet.size * p.scale);
+
+      ctx.save();
+      if (planet.texture) {
+        const pattern = ctx.createPattern(planet.texture, 'repeat');
+        ctx.fillStyle = pattern;
+      } else {
+        ctx.fillStyle = planet.color;
+      }
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (planet.ring) {
+        ctx.strokeStyle = `rgba(222, 215, 199, ${0.25 + 0.4 * p.scale})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const inner = radius * 1.8;
+        const outer = radius * 2.7;
+        ctx.ellipse(p.x, p.y, outer, inner, camera.rotX + 1.2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    let last = performance.now();
+    function loop(now) {
+      const dt = Math.min(now - last, 50) / 1000;
+      last = now;
+
+      if (running) {
+        planets.forEach((planet) => {
+          planet.angle += dt * planet.speed * 1.8;
+        });
+      }
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+
+      drawStarfield();
+      drawSun();
+      planets.forEach(drawOrbit);
+
+      const sorted = [...planets].sort((a, b) => {
+        const pa = project({ x: a.orbit * Math.cos(a.angle), y: 0, z: a.orbit * Math.sin(a.angle) }).depth;
+        const pb = project({ x: b.orbit * Math.cos(b.angle), y: 0, z: b.orbit * Math.sin(b.angle) }).depth;
+        return pb - pa;
+      });
+      sorted.forEach(drawPlanet);
+
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
